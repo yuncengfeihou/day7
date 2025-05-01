@@ -85,6 +85,93 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
     }
 
 
+    /**
+     * 获取指定日期范围内每个角色/群组的聚合统计数据（用于分析）。
+     * @param {string} startDateString - 开始日期 (YYYY-MM-DD)
+     * @param {string} endDateString - 结束日期 (YYYY-MM-DD)
+     * @returns {Promise<Object>} 返回一个对象，键是 entityId，值是该实体在指定范围内的聚合数据。
+     */
+    async function getStatsForDateRange(startDateString, endDateString) {
+        console.log(`${LOG_PREFIX_MAIN} getStatsForDateRange called for ${startDateString} to ${endDateString}`);
+        const aggregatedResults = {};
+
+        try {
+            const allStats = await getAllStats(); // 获取所有原始数据
+            if (!allStats || allStats.length === 0) {
+                console.log(`${LOG_PREFIX_MAIN} No stats data found.`);
+                return aggregatedResults; // 返回空对象
+            }
+
+            const startDate = new Date(startDateString + 'T00:00:00Z'); // 使用 UTC 避免时区问题
+            const endDate = new Date(endDateString + 'T00:00:00Z');
+
+            if (isNaN(startDate.getTime()) || isNaN(endDate.getTime()) || startDate > endDate) {
+                console.error(`${LOG_PREFIX_MAIN} Invalid date range provided.`);
+                throw new Error("Invalid date range");
+            }
+
+            // 遍历所有实体 (不包括全局统计)
+            for (const entityStats of allStats) {
+                if (entityStats.entityId === GLOBAL_STATS_ID || !entityStats.dailyData) {
+                    continue; // 跳过全局统计和没有 dailyData 的实体
+                }
+
+                const entityId = entityStats.entityId;
+                const entityName = entityStats.entityName || entityId;
+
+                // 初始化该实体的聚合数据
+                const rangeData = {
+                    entityId: entityId,
+                    entityName: entityName,
+                    startDate: startDateString,
+                    endDate: endDateString,
+                    userMessages: 0,
+                    userTokens: 0,
+                    aiMessages: 0,
+                    aiTokens: 0,
+                    cumulativePromptTokens: 0, // 范围内每日 Prompt Tokens 总和
+                    totalAiResponseDuration: 0, // 范围内每日 AI 耗时总和
+                    totalInteractionDurationMs: 0, // 范围内每日交互时长总和
+                    // 注意：总交互时长(totalInteractionDurationMs)是根级的，这里我们累加范围内的每日交互时长
+                };
+
+                // 遍历日期范围内的每一天
+                let currentDate = new Date(startDate); // 从开始日期复制一份用于迭代
+                while (currentDate <= endDate) {
+                    const dateKey = currentDate.toISOString().split('T')[0]; // 获取 YYYY-MM-DD 格式的键
+                    const dailyStat = entityStats.dailyData[dateKey]; // 获取当天的统计数据
+
+                    if (dailyStat) {
+                        // 累加数据
+                        rangeData.userMessages += dailyStat.userMessages || 0;
+                        rangeData.userTokens += dailyStat.userTokens || 0;
+                        rangeData.aiMessages += dailyStat.aiMessages || 0;
+                        rangeData.aiTokens += dailyStat.aiTokens || 0;
+                        rangeData.cumulativePromptTokens += dailyStat.cumulativeTokens || 0;
+                        rangeData.totalAiResponseDuration += dailyStat.totalAiResponseDuration || 0;
+                        rangeData.totalInteractionDurationMs += dailyStat.dailyInteractionDurationMs || 0;
+                    }
+
+                    // 移动到下一天 (使用 UTC 方法避免夏令时问题)
+                    currentDate.setUTCDate(currentDate.getUTCDate() + 1);
+                }
+
+                // 只有当该实体在范围内有数据时才添加到结果中（可选）
+                // 或者总是添加，即使数据都是0
+                // if (rangeData.userMessages > 0 || rangeData.aiMessages > 0 || rangeData.totalInteractionDurationMs > 0) {
+                    aggregatedResults[entityId] = rangeData;
+                // }
+            }
+
+            console.log(`${LOG_PREFIX_MAIN} Aggregated stats for range ${startDateString} to ${endDateString}:`, aggregatedResults);
+            return aggregatedResults;
+
+        } catch (error) {
+            console.error(`${LOG_PREFIX_MAIN} Error getting stats for date range:`, error);
+            throw error; // 重新抛出错误，以便调用者知道失败了
+        }
+    }
+
     // --- Worker 通信 (不变) ---
     // ... sendMessageToWorker ...
     function sendMessageToWorker(command, payload) {
