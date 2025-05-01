@@ -1,4 +1,4 @@
-<!-- 文件: public/extensions/third-party/day1/settings_display.html -->
+<!-- 文件: public/extensions/third-party/day7/settings_display.html -->
 <div class="inline-drawer">
     <div class="inline-drawer-toggle inline-drawer-header">
         <b>每日聊天统计3.0</b>
@@ -6,19 +6,28 @@
     </div>
     <div class="inline-drawer-content" style="padding: 10px;">
         <p>记录您每天与不同角色/群组的互动情况。</p>
-        <button id="day1-refresh-button" class="menu_button"><i class="fa-solid fa-arrows-rotate"></i> 刷新统计</button>
-        <div id="day1-stats-container" style="margin-top: 15px; max-height: 400px; overflow-y: auto;">
+
+        <!-- *** 新增日期选择器 *** -->
+        <div style="margin-bottom: 10px; display: flex; align-items: center; gap: 10px;">
+            <label for="day1-date-selector">查看日期:</label>
+            <input type="date" id="day1-date-selector" class="text_pole">
+            <button id="day1-goto-today-button" class="menu_button" title="跳转到今天"><i class="fa-solid fa-calendar-day"></i> 今天</button>
+            <button id="day1-refresh-button" class="menu_button" title="刷新选定日期的统计"><i class="fa-solid fa-arrows-rotate"></i> 刷新</button>
+        </div>
+        <!-- *** 修改结束 *** -->
+
+        <div id="day1-stats-container" style="margin-top: 5px; max-height: 400px; overflow-y: auto;">
             <table id="day1-stats-table" class="stats-table">
                 <thead>
                     <tr>
                         <th>角色/群组</th>
                         <th>用户消息 (Tokens)</th>
                         <th>AI 消息 (Tokens)</th>
-                        <th>今日累计 Prompt Tokens</th>
-                        <th>AI回复</th>
-                        <th>今日交互时长</th>
+                        <th>选定日 Prompt Tokens</th> 
+                        <th>选定日 AI 总耗时</th>  
+                        <th>选定日交互时长</th>     
                         <th>总交互时长</th>
-                        <th>今日总在线时长</th>
+                        <th>选定日总在线时长</th> 
                     </tr>
                 </thead>
                 <tbody id="day1-stats-table-body">
@@ -26,6 +35,6 @@
                 </tbody>
             </table>
         </div>
-        <small style="margin-top: 5px; display: block; color: var(--text-color-secondary);"><i>注：Prompt Tokens 指每次发送给 AI 的完整上下文的总 Token 数累加值。</i></small>
+        <small style="margin-top: 5px; display: block; color: var(--text-color-secondary);"><i>注：Prompt Tokens 指选定日期内每次发送给 AI 的完整上下文的总 Token 数累加值。AI 总耗时指 AI 生成回复所用的时间总和。</i></small> <%-- 可选：更新注释 --%>
     </div>
 </div>
