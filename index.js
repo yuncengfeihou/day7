@@ -6,35 +6,35 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
 
 
 (function () {
-    // --- 插件基础信息 ---
+    // --- 插件基础信息 (不变) ---
     const extensionName = "day7";
-    const pluginFolderName = "day7"; // <<<--- 注意：这里的文件名与插件名需匹配你的文件夹名
+    const pluginFolderName = "day7";
     const extensionFolderPath = `scripts/extensions/third-party/${pluginFolderName}`;
     const extensionSettings = extension_settings[extensionName] || {};
     const defaultSettings = {};
 
     // --- 插件状态变量 ---
     let day1Worker;
-    // Prompt Token 追踪
     let lastCalculatedPromptTokens = 0;
     let lastUsedApi = '';
     let pendingTokenConsumptionLog = false;
-    // 时长追踪
     let lastVisibleTimestamp = null;
     let currentEntityId = null;
     let currentEntityName = null;
     let entityStartTime = null;
+    // *** 新增：存储当前选择查看的日期字符串 ***
+    let selectedDateString = new Date().toISOString().split('T')[0];
 
     const GLOBAL_STATS_ID = '_GLOBAL_STATS_';
-    const LOG_PREFIX_MAIN = `[Day1 DBG Main ${new Date().toISOString()}]`; // <<< 添加日志前缀
+    const LOG_PREFIX_MAIN = `[Day1 DBG Main ${new Date().toISOString()}]`;
 
-    // --- IndexedDB 相关 ---
+    // --- IndexedDB 相关 (不变) ---
     const DB_NAME = 'SillyTavernDay1Stats';
     const STORE_NAME = 'dailyStats';
     const DB_VERSION = 1;
     let dbInstance;
-
-    function openDBMain() {
+    // ... openDBMain, getAllStats (不变) ...
+     function openDBMain() {
         return new Promise((resolve, reject) => {
             if (dbInstance) { resolve(dbInstance); return; }
             console.log(`${LOG_PREFIX_MAIN} Opening IndexedDB...`);
@@ -84,7 +84,9 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
         });
     }
 
-    // --- Worker 通信 ---
+
+    // --- Worker 通信 (不变) ---
+    // ... sendMessageToWorker ...
     function sendMessageToWorker(command, payload) {
         if (!day1Worker) { console.error(`${LOG_PREFIX_MAIN} Worker not initialized! Cannot send message.`); return; }
         try {
@@ -95,8 +97,9 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
         }
     }
 
-    // --- 时长处理函数 ---
-    function recordVisibleDuration() {
+    // --- 时长处理函数 (不变) ---
+    // ... recordVisibleDuration, recordEntityDuration, handleVisibilityChange ...
+     function recordVisibleDuration() {
         console.log(`${LOG_PREFIX_MAIN} recordVisibleDuration called. lastVisibleTimestamp:`, lastVisibleTimestamp);
         if (lastVisibleTimestamp) {
             const now = Date.now();
@@ -160,7 +163,6 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
 
     // --- UI 更新 ---
     function formatDuration(ms) {
-        // 优化：确保 0ms 和小于 1s 的情况返回 '0s'
         if (typeof ms !== 'number' || ms <= 0) return '0s';
         let seconds = Math.floor(ms / 1000);
         let minutes = Math.floor(seconds / 60);
@@ -169,96 +171,109 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
         let result = '';
         if (hours > 0) result += `${hours}h `;
         if (minutes > 0) result += `${minutes}m `;
-        // 即使 hours 和 minutes 都是 0，也要显示秒数
         if (seconds >= 0) result += `${seconds}s`;
-        // 如果计算结果为空字符串（例如 ms 非常小但大于 0），确保返回 '0s'
         return result.trim() || '0s';
     }
 
-    async function updateStatsTable() {
-        console.log(`${LOG_PREFIX_MAIN} updateStatsTable called.`);
+    // *** 修改：updateStatsTable 接受日期参数 ***
+    async function updateStatsTable(targetDateString) {
+        // 如果没有提供日期，则使用当前选择的日期
+        targetDateString = targetDateString || selectedDateString;
+        console.log(`${LOG_PREFIX_MAIN} updateStatsTable called for date: ${targetDateString}`);
+
         const tableBody = $('#day1-stats-table-body');
         if (!tableBody.length) { console.log(`${LOG_PREFIX_MAIN} Table body not found, exiting updateStatsTable.`); return; }
-        tableBody.empty().append('<tr><td colspan="8"><i>正在加载统计数据...</i></td></tr>');
+        tableBody.empty().append(`<tr><td colspan="8"><i>正在加载 ${targetDateString} 的统计数据...</i></td></tr>`);
 
         try {
             const allStats = await getAllStats();
-            console.log(`${LOG_PREFIX_MAIN} Fetched stats data:`, JSON.stringify(allStats));
-            const todayString = new Date().toISOString().split('T')[0];
+            console.log(`${LOG_PREFIX_MAIN} Fetched all stats data for date ${targetDateString}`);
             tableBody.empty();
 
             if (allStats.length === 0) {
-                 console.log(`${LOG_PREFIX_MAIN} No stats data found.`);
+                 console.log(`${LOG_PREFIX_MAIN} No stats data found at all.`);
                  tableBody.append('<tr><td colspan="8"><i>暂无任何统计数据。</i></td></tr>');
                 return;
             }
 
+            // 获取选定日期的全局数据
             const globalStatEntry = allStats.find(s => s.entityId === GLOBAL_STATS_ID);
-            const dailyGlobalData = globalStatEntry?.dailyData?.[todayString];
-            const todayTotalDurationMs = dailyGlobalData?.totalVisibleDurationMs || 0;
-            const todayTotalDurationStr = formatDuration(todayTotalDurationMs);
-            console.log(`${LOG_PREFIX_MAIN} Today's Global Visible Duration: ${todayTotalDurationMs}ms (${todayTotalDurationStr})`);
+            const dailyGlobalData = globalStatEntry?.dailyData?.[targetDateString]; // 使用 targetDateString
+            const selectedDayTotalDurationMs = dailyGlobalData?.totalVisibleDurationMs || 0;
+            const selectedDayTotalDurationStr = formatDuration(selectedDayTotalDurationMs);
+            console.log(`${LOG_PREFIX_MAIN} Selected Date (${targetDateString}) Global Visible Duration: ${selectedDayTotalDurationMs}ms (${selectedDayTotalDurationStr})`);
 
-            let hasTodayData = false;
+            let hasDataForSelectedDate = false;
             const entityStatsList = allStats
                 .filter(s => s.entityId !== GLOBAL_STATS_ID)
                 .sort((a, b) => (a.entityName || a.entityId || '').localeCompare(b.entityName || b.entityId || ''));
 
             entityStatsList.forEach(entityStats => {
-                const dailyData = entityStats.dailyData ? entityStats.dailyData[todayString] : null;
-                console.log(`${LOG_PREFIX_MAIN} Processing entity: ${entityStats.entityId}, Today's dailyData:`, dailyData);
+                // 获取选定日期的实体数据
+                const dailyData = entityStats.dailyData ? entityStats.dailyData[targetDateString] : null; // 使用 targetDateString
+                console.log(`${LOG_PREFIX_MAIN} Processing entity: ${entityStats.entityId} for date ${targetDateString}, DailyData:`, dailyData);
 
+                // 提取选定日期的数据，如果不存在则为 0 或 null
                 const userMessages = dailyData?.userMessages || 0;
                 const userTokens = dailyData?.userTokens || 0;
                 const aiMessages = dailyData?.aiMessages || 0;
                 const aiTokens = dailyData?.aiTokens || 0;
-                const cumulativeTokens = dailyData?.cumulativeTokens || 0;
-                // *** 修改：获取当日 AI 响应总时长 ***
-                const todayTotalAiDurationMs = dailyData?.totalAiResponseDuration || 0;
-                const dailyEntityDurationMs = dailyData?.dailyInteractionDurationMs || 0;
+                const cumulativeTokens = dailyData?.cumulativeTokens || 0; // 当日 Prompt Tokens 累计
+                const totalAiDurationMs = dailyData?.totalAiResponseDuration || 0; // 当日 AI 总耗时
+                const dailyEntityDurationMs = dailyData?.dailyInteractionDurationMs || 0; // 当日实体交互时长
+
+                // 总交互时长是根级别的，与日期无关
                 const totalInteractionDurationMs = entityStats.totalInteractionDurationMs || 0;
 
-                 console.log(`${LOG_PREFIX_MAIN} Entity ${entityStats.entityId} - Daily Duration: ${dailyEntityDurationMs}ms, Total Duration: ${totalInteractionDurationMs}ms, Today AI Duration: ${todayTotalAiDurationMs}ms`);
+                console.log(`${LOG_PREFIX_MAIN} Entity ${entityStats.entityId} - Date ${targetDateString}: Daily Duration: ${dailyEntityDurationMs}ms, AI Duration: ${totalAiDurationMs}ms. Total Interaction: ${totalInteractionDurationMs}ms`);
 
-                // *** 修改：直接格式化当日 AI 总时长，不再计算平均值 ***
-                const todayTotalAiDurationStr = formatDuration(todayTotalAiDurationMs);
-
-                const totalInteractionDurationStr = formatDuration(totalInteractionDurationMs);
+                const totalAiDurationStr = formatDuration(totalAiDurationMs);
+                const totalInteractionDurationStr = formatDuration(totalInteractionDurationMs); // 总时长不变
                 const dailyEntityDurationStr = formatDuration(dailyEntityDurationMs);
 
-                hasTodayData = hasTodayData || !!dailyData;
+                // 标记是否有任何实体在选定日期有数据
+                hasDataForSelectedDate = hasDataForSelectedDate || !!dailyData;
 
-                // *** 修改：更新表格行模板 ***
+                // 生成表格行 (列标题已在 HTML 中修改)
                 const row = `
                     <tr>
                         <td>${entityStats.entityName || entityStats.entityId}</td>
                         <td>${userMessages} (${userTokens} tk)</td>
                         <td>${aiMessages} (${aiTokens} tk)</td>
                         <td>${cumulativeTokens} tk</td>
-                        <td>${todayTotalAiDurationStr}</td> <%-- 显示今日 AI 响应总耗时 --%>
+                        <td>${totalAiDurationStr}</td>
                         <td>${dailyEntityDurationStr}</td>
-                        <td>${totalInteractionDurationStr}</td>
-                        <td>${todayTotalDurationStr}</td>
+                        <td>${totalInteractionDurationStr}</td>   <%-- 总交互时长 --%>
+                        <td>${selectedDayTotalDurationStr}</td> <%-- 选定日总在线时长 --%>
                     </tr>
                 `;
+                // 只添加当天有数据的行吗？或者都添加，让没有数据的显示 0？ -> 显示所有实体，没有数据的自然是 0
                 tableBody.append(row);
             });
 
-            if (!hasTodayData && entityStatsList.length === 0) {
-                 console.log(`${LOG_PREFIX_MAIN} No entity data for today (${todayString}).`);
-                 tableBody.append(`<tr><td colspan="8"><i>今天 (${todayString}) 还没有聊天记录。</i></td></tr>`);
+            // 如果没有任何实体在选定日期有数据，显示提示
+            if (!hasDataForSelectedDate && entityStatsList.length > 0) {
+                 console.log(`${LOG_PREFIX_MAIN} No entity data found for selected date (${targetDateString}).`);
+                 // 保留已添加的行（它们会显示0），但可以加个总提示
+                 // tableBody.append(`<tr><td colspan="8"><i>选定日期 (${targetDateString}) 没有聊天记录。</i></td></tr>`);
+                 // 或者在表头下方加提示？目前让数据行显示0可能更清晰
+            } else if (entityStatsList.length === 0) {
+                // 如果根本没有实体数据（除了全局）
+                tableBody.append(`<tr><td colspan="8"><i>还没有任何角色/群组的统计记录。</i></td></tr>`);
             }
-             console.log(`${LOG_PREFIX_MAIN} updateStatsTable finished successfully.`);
+
+             console.log(`${LOG_PREFIX_MAIN} updateStatsTable for ${targetDateString} finished successfully.`);
 
         } catch (error) {
-            console.error(`${LOG_PREFIX_MAIN} Error fetching or updating stats table:`, error);
-            tableBody.empty().append('<tr><td colspan="8"><i style="color: red;">加载统计数据失败，请检查控制台。</i></td></tr>');
+            console.error(`${LOG_PREFIX_MAIN} Error fetching or updating stats table for ${targetDateString}:`, error);
+            tableBody.empty().append(`<tr><td colspan="8"><i style="color: red;">加载 ${targetDateString} 统计数据失败，请检查控制台。</i></td></tr>`);
         }
     }
 
 
-    // --- 事件处理 ---
-    async function handleMessage(message, isUser) {
+    // --- 事件处理 (handleMessage, onMessageSent - 不变) ---
+    // ... handleMessage, onMessageSent ...
+     async function handleMessage(message, isUser) {
         if (!message || !currentEntityId) {
              console.log(`${LOG_PREFIX_MAIN} handleMessage skipped: No message or currentEntityId.`);
             return;
@@ -280,6 +295,7 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
                  console.log(`${LOG_PREFIX_MAIN} Calculated AI response duration: ${aiResponseDuration}ms`);
             } catch (e) { console.warn(`${LOG_PREFIX_MAIN} Failed to calculate AI response duration.`, e); }
         }
+        // 发送给 worker 的数据不变，worker 会根据 timestamp 存到对应日期
         sendMessageToWorker('processMessage', {
             entityId: currentEntityId, entityName: currentEntityName, isUser, tokenCount,
             timestamp: message.send_date || Date.now(), aiResponseDuration,
@@ -291,6 +307,9 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
         if (context?.chat?.[messageId]) handleMessage(context.chat[messageId], true);
         else console.log(`${LOG_PREFIX_MAIN} Message ${messageId} not found in context.`);
     }
+
+    // --- 事件处理 (onChatChanged - 不变，只影响实时追踪) ---
+    // ... onChatChanged ... (里面的 updateStatsTable() 调用需要修改)
     function onChatChanged(chatId) {
          console.log(`${LOG_PREFIX_MAIN} onChatChanged triggered. ChatId: ${chatId}. Previous Entity: ${currentEntityId}`);
         const context = getContext();
@@ -311,7 +330,7 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
              console.log(`${LOG_PREFIX_MAIN} Context is null.`);
         }
 
-        // 记录切换前的时长
+        // 记录切换前的时长 (不变)
         if (document.visibilityState === 'visible') {
             console.log(`${LOG_PREFIX_MAIN} Chat changed while visible. Recording previous entity duration...`);
             recordEntityDuration();
@@ -323,7 +342,7 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
             console.log(`${LOG_PREFIX_MAIN} Entity ID changed from ${currentEntityId} to ${newEntityId}.`);
             currentEntityId = newEntityId;
             currentEntityName = newEntityName;
-            // 重置新实体的开始时间
+            // 重置新实体的开始时间 (不变)
             if (document.visibilityState === 'visible' && currentEntityId) {
                 entityStartTime = Date.now();
                 console.log(`${LOG_PREFIX_MAIN} Set new entityStartTime for ${currentEntityId}:`, entityStartTime);
@@ -332,16 +351,19 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
                  console.log(`${LOG_PREFIX_MAIN} Visibility not visible or no new entity, entityStartTime set to null.`);
             }
             pendingTokenConsumptionLog = false; lastCalculatedPromptTokens = 0; lastUsedApi = '';
-            updateStatsTable(); // 更新表格
+            // *** 修改：调用 updateStatsTable 时传入当前选择的日期 ***
+            updateStatsTable(selectedDateString);
         } else if (newEntityId === null && currentEntityId !== null) {
              console.log(`${LOG_PREFIX_MAIN} Entity changed from ${currentEntityId} to null.`);
              currentEntityId = null; currentEntityName = null; entityStartTime = null;
-             updateStatsTable(); // 更新表格 (显示全局或无数据状态)
+             // *** 修改：调用 updateStatsTable 时传入当前选择的日期 ***
+             updateStatsTable(selectedDateString);
         } else {
              console.log(`${LOG_PREFIX_MAIN} Entity ID did not change (${currentEntityId}).`);
+             // 实体未变时是否也需要刷新？取决于需求，目前不刷新
+             // updateStatsTable(selectedDateString);
         }
     }
-
 
     // --- 插件初始化 ---
     jQuery(async () => {
@@ -350,85 +372,109 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
         Object.assign(extension_settings[extensionName], { ...defaultSettings, ...extension_settings[extensionName] });
 
         try {
-             console.log(`${LOG_PREFIX_MAIN} Initial DB open attempt...`);
             await openDBMain();
-             console.log(`${LOG_PREFIX_MAIN} Initial DB open successful.`);
+            console.log(`${LOG_PREFIX_MAIN} Initial DB open successful.`);
         } catch (error) { console.error(`${LOG_PREFIX_MAIN} DB init failed:`, error); }
 
         try {
-             console.log(`${LOG_PREFIX_MAIN} Rendering settings UI...`);
+            console.log(`${LOG_PREFIX_MAIN} Rendering settings UI...`);
             const settingsHtml = await renderExtensionTemplateAsync(`third-party/${pluginFolderName}`, 'settings_display');
             const targetContainer = $('#extensions_settings') || $('#extension_settings') || $('body');
             if (targetContainer.length) {
                 targetContainer.append(settingsHtml);
 
-                // --- 修改后的刷新按钮点击事件 ---
-                $('#day1-refresh-button').on('click', () => {
-                    console.log(`${LOG_PREFIX_MAIN} Refresh button clicked.`);
+                // *** 获取新添加的 UI 元素 ***
+                const dateSelector = $('#day1-date-selector');
+                const gotoTodayButton = $('#day1-goto-today-button');
+                const refreshButton = $('#day1-refresh-button'); // 已有按钮
 
-                    // 1. 检查页面是否可见，如果可见，则记录当前累积的时长
-                    if (document.visibilityState === 'visible') {
-                        console.log(`${LOG_PREFIX_MAIN} Refresh clicked while visible. Recording current durations before update...`);
+                // *** 初始化日期选择器为当天 ***
+                dateSelector.val(selectedDateString);
+                console.log(`${LOG_PREFIX_MAIN} Date selector initialized to: ${selectedDateString}`);
 
-                        // 记录并发送当前的总在线时长片段
-                        recordVisibleDuration();
-                        // 重置时间戳以继续追踪
-                        lastVisibleTimestamp = Date.now();
-                        console.log(`${LOG_PREFIX_MAIN} Reset lastVisibleTimestamp after manual record:`, lastVisibleTimestamp);
-
-                        // 记录并发送当前的实体交互时长片段 (如果当前有实体)
-                        recordEntityDuration();
-                        // 如果当前有实体，重置时间戳以继续追踪
-                        if (currentEntityId) {
-                            entityStartTime = Date.now();
-                            console.log(`${LOG_PREFIX_MAIN} Reset entityStartTime after manual record for ${currentEntityId}:`, entityStartTime);
-                        } else {
-                            entityStartTime = null;
-                            console.log(`${LOG_PREFIX_MAIN} No active entity, entityStartTime remains null after manual record.`);
-                        }
+                // *** 日期选择器改变事件 ***
+                dateSelector.on('change', () => {
+                    const newDate = dateSelector.val();
+                    if (newDate && newDate !== selectedDateString) {
+                        console.log(`${LOG_PREFIX_MAIN} Date selected: ${newDate}`);
+                        selectedDateString = newDate;
+                        updateStatsTable(selectedDateString); // 使用新日期更新表格
                     } else {
-                        console.log(`${LOG_PREFIX_MAIN} Refresh clicked while not visible. Durations should have been recorded by visibilitychange.`);
+                        console.log(`${LOG_PREFIX_MAIN} Date selector changed but value is invalid or same.`);
+                    }
+                });
+
+                // *** “跳转到今天”按钮点击事件 ***
+                gotoTodayButton.on('click', () => {
+                    const todayStr = new Date().toISOString().split('T')[0];
+                    console.log(`${LOG_PREFIX_MAIN} Go to Today button clicked.`);
+                    if (selectedDateString !== todayStr) {
+                        selectedDateString = todayStr;
+                        dateSelector.val(selectedDateString); // 更新输入框显示
+                        updateStatsTable(selectedDateString); // 更新表格
+                    } else {
+                         console.log(`${LOG_PREFIX_MAIN} Already on today's date.`);
+                    }
+                });
+
+                // *** 修改“刷新统计”按钮点击事件 ***
+                refreshButton.on('click', () => {
+                    console.log(`${LOG_PREFIX_MAIN} Refresh button clicked for date: ${selectedDateString}`);
+
+                    // 1. 记录当前实时时长（如果页面可见），这部分逻辑与日期选择无关，总是记录“现在”
+                    if (document.visibilityState === 'visible') {
+                        console.log(`${LOG_PREFIX_MAIN} Refresh clicked while visible. Recording current real-time durations before update...`);
+                        recordVisibleDuration();
+                        lastVisibleTimestamp = Date.now(); // 重置以继续追踪
+                        recordEntityDuration();
+                        if (currentEntityId) {
+                            entityStartTime = Date.now(); // 重置以继续追踪
+                        }
+                        console.log(`${LOG_PREFIX_MAIN} Reset real-time timestamps after manual record.`);
+                    } else {
+                        console.log(`${LOG_PREFIX_MAIN} Refresh clicked while not visible. Real-time durations should have been recorded.`);
                     }
 
-                    // 2. （可选延迟后）更新表格显示
+                    // 2. （可选延迟后）更新表格，显示的是当前选定日期的数据
                     setTimeout(() => {
-                        console.log(`${LOG_PREFIX_MAIN} Updating stats table display after refresh click.`);
-                        updateStatsTable();
-                    }, 50); // 短暂延迟，给 worker 一点时间（非必需，但可能有助于看到最新数据）
+                        console.log(`${LOG_PREFIX_MAIN} Updating stats table display for selected date: ${selectedDateString}.`);
+                        updateStatsTable(selectedDateString); // 使用当前选定的日期刷新
+                    }, 50);
                 });
-                // --- 修改结束 ---
 
-                 console.log(`${LOG_PREFIX_MAIN} Settings UI appended. Scheduling initial table update.`);
-                setTimeout(updateStatsTable, 500); // 初始加载延迟
+                console.log(`${LOG_PREFIX_MAIN} Settings UI appended and listeners attached.`);
+                // *** 初始加载时使用选定日期（即当天） ***
+                setTimeout(() => updateStatsTable(selectedDateString), 500);
+
             } else {
                  console.warn(`${LOG_PREFIX_MAIN} Target container for settings UI not found.`);
             }
         } catch (error) { console.error(`${LOG_PREFIX_MAIN} Error loading settings UI:`, error); }
 
         try {
-             console.log(`${LOG_PREFIX_MAIN} Initializing Web Worker...`);
+            console.log(`${LOG_PREFIX_MAIN} Initializing Web Worker...`);
             const workerPath = `${extensionFolderPath}/worker.js`;
             day1Worker = new Worker(workerPath);
             day1Worker.onerror = (error) => { console.error(`${LOG_PREFIX_MAIN} Worker error:`, error.message, error); };
             console.log(`${LOG_PREFIX_MAIN} Web Worker initialized.`);
         } catch (error) { console.error(`${LOG_PREFIX_MAIN} Failed to initialize Worker:`, error); day1Worker = null; }
 
-        // --- 注册核心事件监听器 ---
-         console.log(`${LOG_PREFIX_MAIN} Registering event listeners...`);
-        eventSource.on(event_types.MESSAGE_SENT, onMessageSent);
-        eventSource.on(event_types.CHAT_CHANGED, onChatChanged);
+        // --- 注册核心事件监听器 (GENERATE_AFTER_DATA, MESSAGE_RECEIVED, GENERATION_STOPPED - 不变) ---
+         console.log(`${LOG_PREFIX_MAIN} Registering core event listeners...`);
+        eventSource.on(event_types.MESSAGE_SENT, onMessageSent); // (不变)
+        eventSource.on(event_types.CHAT_CHANGED, onChatChanged); // (内部调用 updateStatsTable 已修改)
         eventSource.on(event_types.GENERATE_AFTER_DATA, async (generateData) => {
              console.log(`${LOG_PREFIX_MAIN} GENERATE_AFTER_DATA event received.`);
             const context = getContext();
-            const currentApi = generateData.type || context.mainApi || mainApi; // 确保获取 API 类型
+            const currentApi = generateData.type || context.mainApi || mainApi;
             if (generateData.dryRun || !currentEntityId) { console.log(`${LOG_PREFIX_MAIN} GENERATE_AFTER_DATA skipped (dryRun or no entityId).`); return; }
             try {
                 let promptTokens = 0;
-                const power_user = extension_settings?.power_user ?? {}; // 安全访问 power_user
+                const power_user = extension_settings?.power_user ?? {};
                 if (currentApi === 'openai' || generateData.is_openai) {
                      if (Array.isArray(generateData.prompt)) {
                         promptTokens = (await Promise.all(generateData.prompt.map(m => getTokenCountAsync(m.content || '', 0)))).reduce((s, c) => s + c, 0);
-                     } else if (typeof generateData.prompt === 'string') { // Fallback for potential string prompt in OpenAI case
+                     } else if (typeof generateData.prompt === 'string') {
                         promptTokens = await getTokenCountAsync(generateData.prompt, power_user?.token_padding || 0);
                      }
                 } else if (typeof generateData.prompt === 'string') {
@@ -441,12 +487,10 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
         eventSource.on(event_types.MESSAGE_RECEIVED, (messageId, type) => {
              console.log(`${LOG_PREFIX_MAIN} MESSAGE_RECEIVED event received. MessageId: ${messageId}, Type: ${type}`);
             const context = getContext();
-            // 处理 AI 消息
-            if (context?.chat?.[messageId] && !context.chat[messageId].is_user && !context.chat[messageId].is_system) handleMessage(context.chat[messageId], false);
-            // 处理待处理的 Prompt Token 记录
+            if (context?.chat?.[messageId] && !context.chat[messageId].is_user && !context.chat[messageId].is_system) handleMessage(context.chat[messageId], false); // (不变)
             if (pendingTokenConsumptionLog && currentEntityId) {
                  console.log(`${LOG_PREFIX_MAIN} Pending prompt token log found. Sending to worker.`);
-                sendMessageToWorker('recordPromptTokens', { entityId: currentEntityId, entityName: currentEntityName, timestamp: Date.now(), promptTokenCount: lastCalculatedPromptTokens });
+                sendMessageToWorker('recordPromptTokens', { entityId: currentEntityId, entityName: currentEntityName, timestamp: Date.now(), promptTokenCount: lastCalculatedPromptTokens }); // (不变)
                 pendingTokenConsumptionLog = false; lastCalculatedPromptTokens = 0;
             } else if (pendingTokenConsumptionLog) {
                  console.log(`${LOG_PREFIX_MAIN} Pending prompt token log found, but no currentEntityId. Resetting.`);
@@ -457,21 +501,20 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
              console.log(`${LOG_PREFIX_MAIN} GENERATION_STOPPED event received.`);
             if (pendingTokenConsumptionLog) {
                  console.log(`${LOG_PREFIX_MAIN} Resetting pending prompt token log due to generation stop.`);
-                pendingTokenConsumptionLog = false; lastCalculatedPromptTokens = 0;
+                pendingTokenConsumptionLog = false; lastCalculatedPromptTokens = 0; // (不变)
             }
         });
 
-        // --- 添加 visibilitychange 监听器 ---
+        // --- 添加 visibilitychange 监听器 (不变) ---
          console.log(`${LOG_PREFIX_MAIN} Adding visibilitychange listener.`);
         document.addEventListener('visibilitychange', handleVisibilityChange);
 
-        // --- 初始化时处理当前状态 ---
+        // --- 初始化时处理当前状态 (不变，但 onChatChanged 内部调用 updateStatsTable 已修改) ---
          console.log(`${LOG_PREFIX_MAIN} Initializing state based on current context...`);
         const initialContext = getContext();
-        onChatChanged(initialContext?.chatId); // 使用初始上下文调用 onChatChanged (会处理 currentEntityId 和 entityStartTime)
+        onChatChanged(initialContext?.chatId); // 会设置 currentEntityId 并调用 updateStatsTable(selectedDateString)
         if (document.visibilityState === 'visible') {
             console.log(`${LOG_PREFIX_MAIN} Document initially visible. Setting initial timestamps.`);
-            // 如果初始可见，设置初始时间戳
             lastVisibleTimestamp = Date.now();
             if (currentEntityId) { // 确保 currentEntityId 已被 onChatChanged 设置
                 entityStartTime = Date.now();
@@ -479,7 +522,6 @@ import { getTokenCountAsync } from '../../../tokenizers.js';
              console.log(`${LOG_PREFIX_MAIN} Initial lastVisibleTimestamp: ${lastVisibleTimestamp}, initial entityStartTime: ${entityStartTime}`);
         } else {
              console.log(`${LOG_PREFIX_MAIN} Document initially hidden.`);
-             // 如果初始不可见，确保时间戳为 null
              lastVisibleTimestamp = null;
              entityStartTime = null;
         }
